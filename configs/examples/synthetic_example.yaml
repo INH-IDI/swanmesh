@@ -1,0 +1,33 @@
+# swanmesh synthetic configuration example
+project_name: synthetic_swan_mesh
+output_dir: ./output/synthetic
+overwrite: true
+
+work_crs: "EPSG:4326"
+output_crs: "EPSG:4326"
+is_utm: false
+
+z_convention: "elevation_negative_down"
+clamp_z_min: null
+clamp_z_max: null
+
+domain_path: "./tests/fixtures/synthetic_domain.shp"
+bathy_xyz_path: "./tests/fixtures/synthetic_bathy.xyz"
+
+dx: 0.002
+dy: 0.002
+buffer_cells: 10
+interp_method: "linear"
+
+hmin: 0.001
+hmax: 0.02
+wave_period: 30.0
+l_constant: 1.5613
+strategy: "product"
+
+depth_limit: -50.0
+marker_strategy: "depth_limit"
+
+export_sidecar_tifs: true
+export_plots: true
+export_msh: true

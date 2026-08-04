@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing / linting
+.pytest_cache/
+.ruff_cache/
+
+# Environment
+venv/
+.venv/
+ambientes/
+
+# Outputs
+output/
+example_output/
+
+# Data (large, sensitive, or generated)
+datos_Bathy_Antofagasta.xyz.csv
+temp_bg.tif
+*.nc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
