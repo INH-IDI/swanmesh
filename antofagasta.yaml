@@ -1,6 +1,6 @@
-project_name: swan_mesh2
-output_dir: /home/model2/trabajo/antofa/output
-overwrite: false
+project_name: swan_mesh
+output_dir: ./output
+overwrite: true
 subdomain_bbox: null
 input_crs: null
 work_crs: EPSG:4326
@@ -15,26 +15,26 @@ bathy_tif_path: null
 bathy_xyz_paths:
 - /home/model2/trabajo/antofa/grillas/Bathy_ANT.csv
 bathy_tif_paths: []
-domain_path: /home/model2/trabajo/antofa/dominio.shp
+domain_path: /home/model2/trabajo/antofa/dominios/borde.shp
 slope_tif_path: null
 coastline_path: null
 use_online_bathymetry: false
 online_bathy_provider: auto
 blend_online_bathymetry: false
 blend_width_pixels: 10.0
-dx: 0.003
-dy: 0.003
-buffer_cells: 25
+dx: 0.002
+dy: 0.002
+buffer_cells: 10
 interp_method: linear
-enable_point_reduction: true
+enable_point_reduction: false
 max_points_per_cell: 5
-hmin: 0.0008
-hmax: 0.07
-wave_period: 30.0
-n_lambda: 0.1
-alpha_grad: 1.5
+hmin: 0.002
+hmax: 0.025
+wave_period: 20.0
+n_lambda: 0.25
+alpha_grad: 1.3
 l_constant: 1.5613
-strategy: dispersion_gradient
+strategy: relative_depth
 weight_slope: 0.7
 weight_depth: 0.3
 slope_mean: null
@@ -46,19 +46,23 @@ combiner: min
 interest_points:
 - name: cp_1
   x: -70.41
-  y: -23.64
-  hmin: 100.0
+  y: -23.65
+  hmin: 0.0005
   hmax: 0.05
-  radius: 1.0
+  radius: 0.1
   n_power: 1.0
 gmsh_algorithm_2d: 6
 gmsh_optimize_netgen: true
 gmsh_smoothing_steps: 3
 enforce_min_node_degree: true
 min_node_degree: 3
+max_boundary_points: 800
+max_est_nodes: 500000
+abort_on_est_nodes: true
 depth_limit: -50.0
 marker_strategy: depth_limit
 open_boundary_lines_path: null
+open_boundary_buffer: null
 export_sidecar_tifs: true
 export_plots: true
 export_msh: true

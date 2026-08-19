@@ -39,9 +39,13 @@ def interpolate_z_to_nodes(
     else:
         grid_data = dem.grid
 
+    # Mask nodata or non-finite values from grid_data
+    valid_mask = np.isfinite(grid_data) & (grid_data != -9999.0)
+    grid_clean = np.where(valid_mask, grid_data, np.nan)
+
     interp = RegularGridInterpolator(
         (y_coords, x_coords),
-        grid_data,
+        grid_clean,
         method="linear",
         bounds_error=False,
         fill_value=np.nan,
@@ -50,17 +54,20 @@ def interpolate_z_to_nodes(
     pts = np.column_stack([y, x])
     z_vals = interp(pts)
 
-    # Fill NaNs with nearest neighbor if any outside exact bounds
+    # Fill NaNs with cKDTree nearest neighbor among VALID dem points
     nan_mask = np.isnan(z_vals)
     if np.any(nan_mask):
-        interp_near = RegularGridInterpolator(
-            (y_coords, x_coords),
-            grid_data,
-            method="nearest",
-            bounds_error=False,
-            fill_value=0.0,
-        )
-        z_vals[nan_mask] = interp_near(pts[nan_mask])
+        from scipy.spatial import cKDTree
+        gy, gx = np.meshgrid(y_coords, x_coords, indexing="ij")
+        valid_indices = np.where(valid_mask)
+        if len(valid_indices[0]) > 0:
+            dem_pts = np.column_stack([gy[valid_indices], gx[valid_indices]])
+            dem_vals = grid_clean[valid_indices]
+            tree = cKDTree(dem_pts)
+            _, nearest_idx = tree.query(pts[nan_mask])
+            z_vals[nan_mask] = dem_vals[nearest_idx]
+        else:
+            z_vals[nan_mask] = 0.0
 
     if z_convention == "depth_positive_down":
         z_vals = -z_vals

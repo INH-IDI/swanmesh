@@ -11,7 +11,7 @@ from swanmesh.errors import ConfigurationError
 def test_config_defaults():
     cfg = MeshConfig(domain_path="dummy.shp", bathy_xyz_path="dummy.xyz")
     assert cfg.project_name == "swan_mesh"
-    assert cfg.strategy == "product"
+    assert cfg.strategy == "dispersion_gradient"
     assert cfg.hmin == 0.001
     assert cfg.hmax == 0.05
 

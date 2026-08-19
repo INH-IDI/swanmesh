@@ -17,3 +17,6 @@ class ExportError(SwanMeshError):
 
 class ConversionError(SwanMeshError):
     """Raised when converting Gmsh .msh to SWAN format fails."""
+
+class MeshSizeGuardError(SwanMeshError):
+    """Raised when estimated mesh size exceeds configured safety limits."""

@@ -1,5 +1,5 @@
-project_name: swan_mesh2
-output_dir: /home/model2/trabajo/antofa/output
+project_name: swan_mesh
+output_dir: ./output11
 overwrite: false
 subdomain_bbox: null
 input_crs: null
@@ -22,17 +22,17 @@ use_online_bathymetry: false
 online_bathy_provider: auto
 blend_online_bathymetry: false
 blend_width_pixels: 10.0
-dx: 0.003
-dy: 0.003
-buffer_cells: 25
+dx: 0.002
+dy: 0.002
+buffer_cells: 20
 interp_method: linear
 enable_point_reduction: true
 max_points_per_cell: 5
-hmin: 0.0008
-hmax: 0.07
+hmin: 0.001
+hmax: 0.05
 wave_period: 30.0
-n_lambda: 0.1
-alpha_grad: 1.5
+n_lambda: 0.2
+alpha_grad: 1.0
 l_constant: 1.5613
 strategy: dispersion_gradient
 weight_slope: 0.7
@@ -43,14 +43,7 @@ hybrid_exponent_a: 1.0
 hybrid_exponent_b: 1.0
 smooth_sigma_pixels: 0.0
 combiner: min
-interest_points:
-- name: cp_1
-  x: -70.41
-  y: -23.64
-  hmin: 100.0
-  hmax: 0.05
-  radius: 1.0
-  n_power: 1.0
+interest_points: []
 gmsh_algorithm_2d: 6
 gmsh_optimize_netgen: true
 gmsh_smoothing_steps: 3

@@ -1,0 +1,31 @@
+project_name: prueba_rapida
+output_dir: /home/model2/trabajo/antofa/grillas/output2
+overwrite: true
+work_crs: EPSG:4326
+output_crs: EPSG:4326
+z_convention: elevation_negative_down
+bathy_xyz_paths:
+  - /home/model2/trabajo/antofa/grillas/Bathy_ANT.csv
+domain_path: /home/model2/trabajo/antofa/dominio.shp
+dx: 0.01
+dy: 0.01
+buffer_cells: 10
+interp_method: linear
+enable_point_reduction: true
+max_points_per_cell: 5
+hmin: 0.001
+hmax: 0.05
+wave_period: 30.0
+n_lambda: 0.1
+alpha_grad: 1.0
+strategy: product
+weight_slope: 0.7
+weight_depth: 0.3
+gmsh_algorithm_2d: 6
+gmsh_smoothing_steps: 2
+enforce_min_node_degree: true
+depth_limit: -50.0
+marker_strategy: depth_limit
+export_sidecar_tifs: false
+export_plots: true
+export_msh: false

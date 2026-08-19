@@ -3,6 +3,9 @@
 import threading
 import traceback
 
+import matplotlib
+matplotlib.use("Agg")
+
 import FreeSimpleGUI as sg
 
 from swanmesh.config import MeshConfig

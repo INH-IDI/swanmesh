@@ -7,6 +7,7 @@ import rasterio
 
 from swanmesh.bathymetry import DEMData
 from swanmesh.errors import DataInputError
+from swanmesh.geo_units import cell_size_meters
 
 
 class SlopeData:
@@ -18,12 +19,14 @@ class SlopeData:
         transform: rasterio.transform.Affine,
         crs: str,
         bounds: tuple[float, float, float, float],
+        units: str = "m/m",
     ):
         self.grid = grid.astype(np.float32)
         self.transform = transform
         self.crs = crs
         self.bounds = bounds
         self.height, self.width = grid.shape
+        self.units = units
         self.mean = float(np.mean(grid))
         self.std = float(np.std(grid))
 
@@ -44,14 +47,17 @@ class SlopeData:
             nodata=-9999.0,
         ) as dst:
             dst.write(self.grid, 1)
+            dst.update_tags(units=self.units)
 
-def compute_slope_from_dem(dem: DEMData) -> SlopeData:
-    """Compute slope raster from DEM using 2D central differences (numpy.gradient)."""
-    dx = abs(dem.transform.a)
-    dy = abs(dem.transform.e)
 
-    # numpy.gradient handles 2D arrays (axis 0 = rows/y, axis 1 = cols/x)
-    grad_y, grad_x = np.gradient(dem.grid, dy, dx)
+def compute_slope_from_dem(dem: DEMData, is_utm: bool = False) -> SlopeData:
+    """Compute dimensionless slope |grad h| using metric spacing when CRS is geographic."""
+    dx_native = abs(dem.transform.a)
+    dy_native = abs(dem.transform.e)
+    center_y = 0.5 * (dem.bounds[1] + dem.bounds[3])
+    dx_m, dy_m = cell_size_meters(dx_native, dy_native, center_y, dem.crs, is_utm=is_utm)
+
+    grad_y, grad_x = np.gradient(dem.grid.astype(np.float64), dy_m, dx_m)
     slope_grid = np.sqrt(grad_x**2 + grad_y**2)
 
     return SlopeData(
@@ -59,7 +65,9 @@ def compute_slope_from_dem(dem: DEMData) -> SlopeData:
         transform=dem.transform,
         crs=dem.crs,
         bounds=dem.bounds,
+        units="m/m",
     )
+
 
 def load_slope_tif(
     slope_path: str | Path,
@@ -72,20 +80,24 @@ def load_slope_tif(
     try:
         with rasterio.open(p) as src:
             grid = src.read(1).astype(np.float32)
+            units = src.tags().get("units", "m/m")
             return SlopeData(
                 grid=grid,
                 transform=src.transform,
                 crs=src.crs.to_string() if src.crs else dem.crs,
                 bounds=dem.bounds,
+                units=units,
             )
     except Exception as e:
         raise DataInputError(f"Error loading slope GeoTIFF {slope_path}: {e}") from e
 
+
 def build_slope(
     dem: DEMData,
     slope_tif_path: str | Path | None = None,
+    is_utm: bool = False,
 ) -> SlopeData:
     """Build slope raster either by loading GeoTIFF or calculating from DEM."""
     if slope_tif_path:
         return load_slope_tif(slope_tif_path, dem)
-    return compute_slope_from_dem(dem)
+    return compute_slope_from_dem(dem, is_utm=is_utm)

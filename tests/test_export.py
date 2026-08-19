@@ -51,3 +51,34 @@ def test_export_swan_triangle(tmp_path: Path):
         bot_lines = f.readlines()
         assert len(bot_lines) == 3
         assert "-10.500" in bot_lines[0]
+
+
+def test_export_renumbers_element_ids(tmp_path: Path):
+    nodes = pd.DataFrame(
+        {
+            "N": [1, 2, 3],
+            "X": [0.0, 1.0, 0.5],
+            "Y": [0.0, 0.0, 1.0],
+            "Z": [-10.0, -11.0, -12.0],
+            "Borde": [1, 2, 0],
+        }
+    )
+    triangles = pd.DataFrame(
+        {
+            "ID": [3, 7, 12],
+            "ELEMENT1": [1, 2, 3],
+            "ELEMENT2": [2, 3, 1],
+            "ELEMENT3": [3, 1, 2],
+        }
+    )
+
+    out_dir = export_swan_triangle(nodes, triangles, output_dir=tmp_path, base_name="renum_swan")
+    ele_file = out_dir / "renum_swan.ele"
+
+    with open(ele_file) as f:
+        header = f.readline().strip()
+        rows = [line.strip().split() for line in f if line.strip()]
+
+    assert header == "3 3 0"
+    ids = [int(r[0]) for r in rows]
+    assert ids == [1, 2, 3]

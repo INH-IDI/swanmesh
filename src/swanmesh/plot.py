@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -33,10 +35,14 @@ def plot_pipeline_previews(
     extent_bbox = [minx, maxx, miny, maxy]
     im0 = axes[0].imshow(dem.grid, cmap="cividis", extent=extent_bbox, origin="lower")
     axes[0].set_title("Bathymetry DEM (Z)")
+    axes[0].set_xlim(minx, maxx)
+    axes[0].set_ylim(miny, maxy)
     fig.colorbar(im0, ax=axes[0])
 
     im1 = axes[1].imshow(size_field.grid, cmap="viridis", extent=extent_bbox, origin="lower")
     axes[1].set_title(f"Mesh Size Field H ({size_field.strategy})")
+    axes[1].set_xlim(minx, maxx)
+    axes[1].set_ylim(miny, maxy)
     fig.colorbar(im1, ax=axes[1])
 
     plt.tight_layout()

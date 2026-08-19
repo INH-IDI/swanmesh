@@ -102,6 +102,15 @@ swanmesh-gui
 - **`output_crs`**: CRS de salida para las coordenadas $(X, Y)$ en `.node` (por defecto `EPSG:4326`).
 - **Unidades de tamaño (`hmin`, `hmax`)**: Se expresan en las unidades nativas del `work_crs` (grados si se trabaja en lon/lat, metros si se trabaja en UTM).
 
+
+### Unidades importantes (lon/lat vs UTM)
+- En `EPSG:4326`, `hmin`/`hmax` y tamaños de malla están en **grados** (0.01° ≈ 1 km).
+- La pendiente se calcula siempre en **m/m** (adimensional), también en CRS geográficos.
+- `n_lambda` actúa sobre la longitud de onda convertida a unidades del `work_crs`.
+  En lon/lat costero típico usar `n_lambda ≈ 0.2–0.5` para no saturar en `hmin`.
+  En UTM (metros) usar `n_lambda ≈ 10–30` como en mallas clásicas.
+- `max_est_nodes` aborta corridas que explotarían a millones de nodos.
+
 ### Convención Z / `.bot`
 - **`elevation_negative_down` (Default)**: La cota $Z$ del fondo marino es negativa ($Z < 0$, ej. $-20\text{ m}$). El archivo `.bot` exporta estos valores con signo negativo.
 - **`depth_positive_down`**: La profundidad es positiva ($Z > 0$, ej. $20\text{ m}$).

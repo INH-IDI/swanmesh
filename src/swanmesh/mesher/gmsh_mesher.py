@@ -1,7 +1,5 @@
 """Gmsh meshing engine implementation for swanmesh."""
 
-from collections import Counter
-
 import numpy as np
 import pandas as pd
 
@@ -55,15 +53,28 @@ def _safe_gmsh_finalize() -> None:
             signal.signal = orig_signal
 
 class GmshMesher(BaseMesher):
-    """Gmsh 2D mesh generator using background size field."""
+    """Gmsh 2D mesh generator using background size field and quality optimization."""
 
-    def __init__(self, algorithm_2d: int = 6):
+    def __init__(
+        self,
+        algorithm_2d: int = 6,
+        optimize_netgen: bool = True,
+        smoothing_steps: int = 3,
+        enforce_min_node_degree: bool = True,
+        min_node_degree: int = 3,
+        max_boundary_points: int = 5000,
+    ):
         """
-        algorithm_2d: 1: MeshAdapt, 2: Automatic, 5: Delaunay, 6: Frontal-Delaunay (default)
+        algorithm_2d: 1: MeshAdapt, 2: Automatic, 5: Delaunay, 6: Frontal-Delaunay (default), 7: BAMG
         """
         if not HAS_GMSH:
             raise MeshingError("gmsh Python package is not installed.")
         self.algorithm_2d = algorithm_2d
+        self.optimize_netgen = optimize_netgen
+        self.smoothing_steps = smoothing_steps
+        self.enforce_min_degree = enforce_min_node_degree
+        self.min_node_degree = min_node_degree
+        self.max_boundary_points = max_boundary_points
 
     def generate_mesh(self, domain: DomainModel, size_field: MeshSizeField) -> MeshResult:
         """Build Gmsh model from domain polygon and apply background size field raster."""
@@ -74,6 +85,11 @@ class GmshMesher(BaseMesher):
             gmsh.option.setNumber("General.Terminal", 0)
             gmsh.model.add("swanmesh_model")
             gmsh.option.setNumber("Mesh.Algorithm", self.algorithm_2d)
+            if self.smoothing_steps > 0:
+                gmsh.option.setNumber("Mesh.Smoothing", self.smoothing_steps)
+
+            # 0. Resample domain boundary with the local size field
+            domain = self._resample_boundary_to_field(domain, size_field)
 
             curve_loops = []
 
@@ -103,8 +119,26 @@ class GmshMesher(BaseMesher):
             gmsh.model.mesh.field.setNumber(field_tag, "ViewIndex", 0)
             gmsh.model.mesh.field.setAsBackgroundMesh(field_tag)
 
-            # 5. Generate 2D Mesh
+            # Avoid extending tiny boundary sizes into the interior
+            gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+            gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+            gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+
+            # 5. Generate 2D Mesh and optimize (fallback algorithm if empty)
             gmsh.model.mesh.generate(2)
+            etypes, etags, _ = gmsh.model.mesh.getElements(dim=2)
+            if not any(t == 2 for t in etypes):
+                # Fallback: coarser Delaunay without aggressive boundary densification
+                gmsh.model.mesh.clear()
+                gmsh.option.setNumber("Mesh.Algorithm", 5)  # Delaunay
+                gmsh.model.mesh.generate(2)
+
+            if self.optimize_netgen:
+                try:
+                    gmsh.model.mesh.optimize("Netgen")
+                    gmsh.model.mesh.optimize("Relocate2D")
+                except Exception:
+                    pass
 
             # 6. Extract Nodes
             node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
@@ -126,40 +160,53 @@ class GmshMesher(BaseMesher):
             tri_tags = elem_tags[tri_indices[0]].astype(np.int32)
             tri_nodes = elem_node_tags[tri_indices[0]].reshape(-1, 3).astype(np.int32)
 
-            # Map node IDs to coordinates for CCW orientation check
-            node_dict = dict(zip(nodes_df["N"], zip(nodes_df["X"], nodes_df["Y"])))
-            ccw_tri_nodes = []
-            for n1, n2, n3 in tri_nodes:
-                x1, y1 = node_dict[n1]
-                x2, y2 = node_dict[n2]
-                x3, y3 = node_dict[n3]
-                cross = (x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)
-                if cross < 0:
-                    # Clockwise -> swap n2 and n3 to make CCW
-                    ccw_tri_nodes.append((n1, n3, n2))
-                else:
-                    ccw_tri_nodes.append((n1, n2, n3))
+            # Vectorized CCW orientation check using NumPy
+            tag_to_idx = np.zeros(int(np.max(node_tags)) + 1, dtype=np.int32)
+            tag_to_idx[nodes_df["N"].values] = np.arange(len(nodes_df))
 
-            ccw_arr = np.array(ccw_tri_nodes, dtype=np.int32)
+            idx1 = tag_to_idx[tri_nodes[:, 0]]
+            idx2 = tag_to_idx[tri_nodes[:, 1]]
+            idx3 = tag_to_idx[tri_nodes[:, 2]]
+
+            x_all = nodes_df["X"].values
+            y_all = nodes_df["Y"].values
+
+            x1, y1 = x_all[idx1], y_all[idx1]
+            x2, y2 = x_all[idx2], y_all[idx2]
+            x3, y3 = x_all[idx3], y_all[idx3]
+
+            cross = (x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)
+            flip_mask = cross < 0
+
+            ccw_tri_nodes = tri_nodes.copy()
+            ccw_tri_nodes[flip_mask, 1] = tri_nodes[flip_mask, 2]
+            ccw_tri_nodes[flip_mask, 2] = tri_nodes[flip_mask, 1]
+
             elem_df = pd.DataFrame(
                 {
                     "ID": tri_tags,
-                    "ELEMENT1": ccw_arr[:, 0],
-                    "ELEMENT2": ccw_arr[:, 1],
-                    "ELEMENT3": ccw_arr[:, 2],
+                    "ELEMENT1": ccw_tri_nodes[:, 0],
+                    "ELEMENT2": ccw_tri_nodes[:, 1],
+                    "ELEMENT3": ccw_tri_nodes[:, 2],
                 }
             ).sort_values("ID").reset_index(drop=True)
 
-            # 8. Extract Boundary Edges (frequency == 1)
-            edges = []
-            for _, row in elem_df.iterrows():
-                n1, n2, n3 = int(row["ELEMENT1"]), int(row["ELEMENT2"]), int(row["ELEMENT3"])
-                edges.append(tuple(sorted([n1, n2])))
-                edges.append(tuple(sorted([n2, n3])))
-                edges.append(tuple(sorted([n3, n1])))
+            # 8. Fast Vectorized Extract Boundary Edges (frequency == 1)
+            e1 = np.sort(ccw_tri_nodes[:, [0, 1]], axis=1)
+            e2 = np.sort(ccw_tri_nodes[:, [1, 2]], axis=1)
+            e3 = np.sort(ccw_tri_nodes[:, [2, 0]], axis=1)
+            all_edges = np.vstack([e1, e2, e3])
 
-            edge_counts = Counter(edges)
-            boundary_edges = [edge for edge, count in edge_counts.items() if count == 1]
+            edges_unique, counts = np.unique(all_edges, axis=0, return_counts=True)
+            bnd_arr = edges_unique[counts == 1]
+            boundary_edges = [tuple(e) for e in bnd_arr]
+
+            # 9. Enforce Minimum Node Degree Topology (min degree >= 3)
+            if self.enforce_min_degree:
+                from swanmesh.mesher.topology import enforce_min_node_degree
+                nodes_df, elem_df, boundary_edges = enforce_min_node_degree(
+                    nodes_df, elem_df, min_degree=self.min_node_degree
+                )
 
             return MeshResult(nodes=nodes_df, triangles=elem_df, boundary_edges=boundary_edges)
 
@@ -171,6 +218,80 @@ class GmshMesher(BaseMesher):
         finally:
             if gmsh.isInitialized():
                 _safe_gmsh_finalize()
+
+    def _resample_boundary_to_field(self, domain: DomainModel, size_field: MeshSizeField) -> DomainModel:
+        """Resample the domain boundary with spacing driven by the local size field.
+
+        - Spacing is sampled (bilinear) from the size field at each boundary position,
+          so refined zones (coast, interest points) get denser boundary nodes.
+        - Spacing is never smaller than the raster resolution (the field cannot
+          represent finer detail) nor larger than a robust fallback.
+        - The global point budget `max_boundary_points` includes holes; if exceeded,
+          all spacings are rescaled uniformly.
+        """
+        h_vals = size_field.grid[np.isfinite(size_field.grid) & (size_field.grid > 0)]
+        fallback_h = float(np.percentile(h_vals, 10)) if h_vals.size else 1.0
+        raster_min = max(
+            min(abs(size_field.transform.a), abs(size_field.transform.e)), 1e-9
+        )
+
+        def make_spacing(factor: float):
+            def spacing_fn(x: float, y: float) -> float:
+                h = self._sample_size_field(size_field, x, y)
+                if h is None:
+                    h = fallback_h
+                h = max(float(h), raster_min)
+                return h * factor
+
+            return spacing_fn
+
+        factor = 1.0
+        resampled = domain
+        if self.max_boundary_points <= 0:
+            return domain.resample_boundary_with_spacing(
+                make_spacing(1.0),
+                sample_step=raster_min,
+                simplify_tol=max(raster_min * 0.25, 1e-8),
+            )
+        for _ in range(3):
+            resampled = domain.resample_boundary_with_spacing(
+                make_spacing(factor),
+                sample_step=raster_min,
+                simplify_tol=max(raster_min * 0.25, 1e-8),
+            )
+            total = len(resampled.exterior_coords) + sum(
+                len(h) for h in resampled.holes_coords
+            )
+            if total <= self.max_boundary_points:
+                return resampled
+            factor = max(factor * total / float(self.max_boundary_points), 1e-6)
+        return resampled
+
+    @staticmethod
+    def _sample_size_field(size_field: MeshSizeField, x: float, y: float) -> float | None:
+        """Bilinear sample of the size field at (x, y) in CRS units; None outside grid."""
+        tr = size_field.transform
+        det = tr.a * tr.e - tr.b * tr.d
+        if det == 0:
+            return None
+        col = (tr.e * (x - tr.c) - tr.b * (y - tr.f)) / det
+        row = (-tr.d * (x - tr.c) + tr.a * (y - tr.f)) / det
+        c0 = int(np.floor(col))
+        r0 = int(np.floor(row))
+        if c0 < 0 or r0 < 0 or c0 >= size_field.width - 1 or r0 >= size_field.height - 1:
+            return None
+        grid = size_field.grid
+        fx = col - c0
+        fy = row - r0
+        value = (
+            grid[r0, c0] * (1.0 - fx) * (1.0 - fy)
+            + grid[r0, c0 + 1] * fx * (1.0 - fy)
+            + grid[r0 + 1, c0] * (1.0 - fx) * fy
+            + grid[r0 + 1, c0 + 1] * fx * fy
+        )
+        if not np.isfinite(value) or value <= 0:
+            return None
+        return float(value)
 
     @staticmethod
     def _clean_coords(coords: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -193,33 +314,34 @@ class GmshMesher(BaseMesher):
 
     @staticmethod
     def _build_sq_data(size_field: MeshSizeField) -> list[float]:
-        """Convert MeshSizeField raster into Scalar Quad (SQ) array for Gmsh PostView."""
+        """Convert MeshSizeField raster into Scalar Quad (SQ) array for Gmsh PostView with fast vectorization."""
         h, w = size_field.height, size_field.width
         tr = size_field.transform
 
-        # Compute cell corner coordinates
-        # Note: rasterio affine transform: (col c, row r) -> (x, y)
         cols = np.arange(w)
         rows = np.arange(h)
-        x_coords = tr.a * cols + tr.c
-        y_coords = tr.e * rows + tr.f
+        x_coords = (tr.a * cols + tr.c).astype(np.float64)
+        y_coords = (tr.e * rows + tr.f).astype(np.float64)
 
-        sq_list = []
-        grid = size_field.grid
+        x_mesh, y_mesh = np.meshgrid(x_coords, y_coords)
 
-        for r in range(h - 1):
-            for c in range(w - 1):
-                x1, y1 = x_coords[c], y_coords[r]
-                x2, y2 = x_coords[c + 1], y_coords[r]
-                x3, y3 = x_coords[c + 1], y_coords[r + 1]
-                x4, y4 = x_coords[c], y_coords[r + 1]
+        x1 = x_mesh[:-1, :-1].ravel()
+        x2 = x_mesh[:-1, 1:].ravel()
+        x3 = x_mesh[1:, 1:].ravel()
+        x4 = x_mesh[1:, :-1].ravel()
 
-                v1 = float(grid[r, c])
-                v2 = float(grid[r, c + 1])
-                v3 = float(grid[r + 1, c + 1])
-                v4 = float(grid[r + 1, c])
+        y1 = y_mesh[:-1, :-1].ravel()
+        y2 = y_mesh[:-1, 1:].ravel()
+        y3 = y_mesh[1:, 1:].ravel()
+        y4 = y_mesh[1:, :-1].ravel()
 
-                # SQ format: x1..x4, y1..y4, z1..z4, v1..v4
-                sq_list.extend([x1, x2, x3, x4, y1, y2, y3, y4, 0.0, 0.0, 0.0, 0.0, v1, v2, v3, v4])
+        z0 = np.zeros_like(x1)
 
-        return sq_list
+        grid = size_field.grid.astype(np.float64)
+        v1 = grid[:-1, :-1].ravel()
+        v2 = grid[:-1, 1:].ravel()
+        v3 = grid[1:, 1:].ravel()
+        v4 = grid[1:, :-1].ravel()
+
+        sq_matrix = np.column_stack([x1, x2, x3, x4, y1, y2, y3, y4, z0, z0, z0, z0, v1, v2, v3, v4])
+        return sq_matrix.ravel().tolist()

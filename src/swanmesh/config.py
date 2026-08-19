@@ -11,12 +11,14 @@ from swanmesh.errors import ConfigurationError
 
 class InterestPointConfig(BaseModel):
     """Interest point or zone to locally refine mesh size."""
-    name: str = "interest_point"
+    name: str = "control_point"
     x: float
     y: float
     hmin: float
-    hmax: float
+    hmax: float = 0.05
+    radius: float = 1.0
     n_power: float = 1.0
+
 
 class MeshConfig(BaseModel):
     """Full configuration model for swanmesh pipeline."""
@@ -24,6 +26,9 @@ class MeshConfig(BaseModel):
     project_name: str = "swan_mesh"
     output_dir: str = "./output"
     overwrite: bool = False
+
+    # Subdomain ROI (Region of Interest) Box [xmin, ymin, xmax, ymax]
+    subdomain_bbox: Optional[list[float]] = None
 
     # CRS Configuration
     input_crs: str | None = None
@@ -40,6 +45,8 @@ class MeshConfig(BaseModel):
     # Input Files
     bathy_xyz_path: Optional[str] = None
     bathy_tif_path: Optional[str] = None
+    bathy_xyz_paths: list[str] = Field(default_factory=list)
+    bathy_tif_paths: list[str] = Field(default_factory=list)
     domain_path: str = ""
     slope_tif_path: Optional[str] = None
     coastline_path: Optional[str] = None
@@ -50,18 +57,27 @@ class MeshConfig(BaseModel):
     blend_online_bathymetry: bool = False
     blend_width_pixels: float = 10.0
 
-    # DEM Generation Settings
+    # DEM Generation & Point Reduction Settings
     dx: float = 0.002
     dy: float = 0.002
     buffer_cells: int = 20
     interp_method: str = "linear"
+    enable_point_reduction: bool = True
+    max_points_per_cell: int = 5
 
-    # Mesh Size Field Settings
+    # Mesh Size Field Settings (Wave Dispersion + Slope Gradient)
     hmin: float = 0.001
     hmax: float = 0.05
     wave_period: float = 30.0
-    l_constant: float = 1.5613
-    strategy: Literal["product", "mean", "depth_weighted", "hybrid_smooth"] = "product"
+    n_lambda: float = 15.0
+    alpha_grad: float = 1.0
+    l_constant: float = 1.5613  # legacy placeholder (unused)
+    strategy: Literal[
+        "dispersion_gradient", "product", "mean", "depth_weighted", "hybrid_smooth",
+        "relative_depth"
+    ] = "dispersion_gradient"
+    weight_slope: float = 0.7
+    weight_depth: float = 0.3
     slope_mean: float | None = None
     slope_std: float | None = None
     hybrid_exponent_a: float = 1.0
@@ -70,10 +86,25 @@ class MeshConfig(BaseModel):
     combiner: Literal["min", "product"] = "min"
     interest_points: list[InterestPointConfig] = Field(default_factory=list)
 
+    # Meshing Engine & Quality Options
+    gmsh_algorithm_2d: int = 6  # 1: MeshAdapt, 5: Delaunay, 6: Frontal-Delaunay, 7: BAMG
+    gmsh_optimize_netgen: bool = True
+    gmsh_smoothing_steps: int = 3
+    enforce_min_node_degree: bool = True
+    min_node_degree: int = 3
+    max_boundary_points: int = 5000
+    # Max geometric size growth between adjacent cells (hgrad); 1.0 disables
+    mesh_growth: float = 1.2
+
+    # Safety guards
+    max_est_nodes: int = 500000
+    abort_on_est_nodes: bool = True
+
     # Boundary & Marker Settings
     depth_limit: float = -50.0
     marker_strategy: Literal["depth_limit", "open_boundary_lines"] = "depth_limit"
     open_boundary_lines_path: str | None = None
+    open_boundary_buffer: float | None = None
 
     # Export & Sidecars
     export_sidecar_tifs: bool = True
@@ -82,14 +113,33 @@ class MeshConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_inputs_and_sizes(self) -> "MeshConfig":
-        if not self.bathy_xyz_path and not self.bathy_tif_path and not self.use_online_bathymetry:
-            raise ConfigurationError("At least one of bathy_xyz_path, bathy_tif_path, or use_online_bathymetry must be provided.")
+        has_bathy = (
+            bool(self.bathy_xyz_path)
+            or bool(self.bathy_tif_path)
+            or bool(self.bathy_xyz_paths)
+            or bool(self.bathy_tif_paths)
+            or self.use_online_bathymetry
+        )
+        if not has_bathy:
+            raise ConfigurationError(
+                "At least one of bathy_xyz_path, bathy_tif_path, or use_online_bathymetry must be provided."
+            )
         if self.hmin <= 0 or self.hmax <= 0:
             raise ConfigurationError(f"hmin ({self.hmin}) and hmax ({self.hmax}) must be positive.")
         if self.hmin > self.hmax:
             raise ConfigurationError(f"hmin ({self.hmin}) cannot be greater than hmax ({self.hmax}).")
         if self.dx <= 0 or self.dy <= 0:
             raise ConfigurationError(f"dx ({self.dx}) and dy ({self.dy}) must be positive.")
+        if self.max_points_per_cell < 1:
+            raise ConfigurationError(f"max_points_per_cell ({self.max_points_per_cell}) must be >= 1.")
+        if self.n_lambda <= 0:
+            raise ConfigurationError(f"n_lambda ({self.n_lambda}) must be positive.")
+        if self.max_est_nodes < 1:
+            raise ConfigurationError(f"max_est_nodes ({self.max_est_nodes}) must be >= 1.")
+        if self.max_boundary_points < 3:
+            raise ConfigurationError(f"max_boundary_points ({self.max_boundary_points}) must be >= 3.")
+        if self.mesh_growth < 1.0:
+            raise ConfigurationError(f"mesh_growth ({self.mesh_growth}) must be >= 1.0.")
         return self
 
     @classmethod
