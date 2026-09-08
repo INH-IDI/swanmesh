@@ -1,0 +1,173 @@
+Metadata-Version: 2.4
+Name: swanmesh
+Version: 0.1.0
+Summary: SWAN unstructured 2D mesh generator and converter using Gmsh
+Author-email: Antigravity Team <info@example.com>
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.22.0
+Requires-Dist: scipy>=1.8.0
+Requires-Dist: pandas>=1.4.0
+Requires-Dist: geopandas>=0.10.0
+Requires-Dist: shapely>=2.0.0
+Requires-Dist: pyproj>=3.3.0
+Requires-Dist: rasterio>=1.3.0
+Requires-Dist: matplotlib>=3.5.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: typer>=0.9.0
+Requires-Dist: gmsh>=4.11.0
+Provides-Extra: gui
+Requires-Dist: FreeSimpleGUI>=5.0.0; extra == "gui"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+
+# swanmesh
+
+**swanmesh** es un software en Python para la generación y conversión automática de mallas 2D no estructuradas (formato Triangle `.node`, `.ele`, `.bot`) destinadas al modelo de oleaje **SWAN**, utilizando el motor de mallado **Gmsh**.
+
+---
+
+## Características Principales
+
+- **Librería modular (`swanmesh`)**: API en Python sin dependencias de GUI para automatización y scripts.
+- **Interfaz gráfica de escritorio (`swanmesh-gui`)**: Basada en FreeSimpleGUI, con ejecución de tareas en segundo plano.
+- **Interfaz de línea de comandos (`swanmesh`)**: Desarrollada con Typer para la ejecución basada en archivos de configuración YAML.
+- **Motor de mallado basado en Gmsh**: Generación de mallas triangulares 2D con campos de tamaño de elemento continuos basados en batimetría y pendiente.
+- **4 Estrategias de tamaño de malla**:
+  1. `product` (Default — gridsize1): Ponderación basada en profundidades someras y pendientes fuertes.
+  2. `mean` (gridsize3): Promedio directo entre escala de profundidad y pendiente.
+  3. `depth_weighted` (gridsize4): Mezcla adaptativa según la profundidad.
+  4. `hybrid_smooth` (NUEVO): Exponentes $a, b$ configurables con suavizado Gaussiano en espacio logarítmico para estabilidad en Gmsh.
+- **Puntos de interés**: Refinamiento radial localizado (`Distancia_y_Peso`).
+- **Conversión de mallas heredadas**: Conversión de archivos `.msh` de Gmsh 2.0 a `.node`, `.ele`, `.bot`.
+- **Clasificación de bordes**:
+  - `0`: Nodos interiores.
+  - `1`: Borde cerrado / costa o línea de tierra.
+  - `2`: Borde abierto / frontera marina (donde el nodo está en el borde y $Z < \text{depth\_limit}$, por defecto $-50\text{ m}$).
+- **Verificación de Calidad (QA)**: Reporte JSON automático (`_report.json`), orientación antihoraria (CCW) de elementos y chequeo de NaNs / nodos huérfanos.
+
+---
+
+## Instalación
+
+Se recomienda utilizar un entorno virtual en Python >= 3.10 (por ejemplo, `~/ambientes/ML`).
+
+```bash
+# Activar entorno virtual
+source ~/ambientes/ML/bin/activate
+
+# Clonar e instalar en modo ejecutable con extras de desarrollo y GUI
+pip install -e ".[dev,gui]"
+```
+
+---
+
+## Uso de la Librería en Python
+
+```python
+from swanmesh.config import MeshConfig
+from swanmesh.pipeline import run
+
+# Definir configuración
+config = MeshConfig(
+    project_name="antofagasta_mesh",
+    output_dir="./output/antofagasta",
+    domain_path="./domain.shp",
+    bathy_xyz_path="./datos_Bathy_Antofagasta.xyz.csv",
+    hmin=0.0005,
+    hmax=0.005,
+    strategy="product",
+    z_convention="elevation_negative_down"
+)
+
+# Ejecutar pipeline
+result = run(config)
+print("Archivos generados:", result.files_generated)
+```
+
+---
+
+## Uso desde la Línea de Comandos (CLI)
+
+```bash
+# Ejecutar pipeline completo desde archivo YAML
+swanmesh run configs/examples/synthetic_example.yaml
+
+# Validar archivo de configuración YAML
+swanmesh validate-config configs/examples/synthetic_example.yaml
+
+# Convertir malla .msh heredada de Gmsh a SWAN (.node, .ele, .bot)
+swanmesh convert-msh malla.msh --dem dem.tif --out ./output_convert --depth-limit -50.0
+
+# Generar solo el GeoTIFF del DEM
+swanmesh build-dem config.yaml --out dem.tif
+
+# Generar solo el GeoTIFF del campo de tamaños
+swanmesh build-size-field config.yaml --out tamaño.tif
+```
+
+---
+
+## Interfaz Gráfica (GUI)
+
+Para abrir la aplicación de escritorio:
+
+```bash
+swanmesh-gui
+```
+
+---
+
+## Convenciones de Coordenadas y Elevación (Z)
+
+### Sistema de Referencia Espacial (CRS)
+- **`work_crs`**: CRS de trabajo para el DEM y el mallado (por defecto `EPSG:4326` lon/lat o coordenadas métricas UTM como `EPSG:32718`).
+- **`output_crs`**: CRS de salida para las coordenadas $(X, Y)$ en `.node` (por defecto `EPSG:4326`).
+- **Unidades de tamaño (`hmin`, `hmax`)**: Se expresan en las unidades nativas del `work_crs` (grados si se trabaja en lon/lat, metros si se trabaja en UTM).
+
+### Convención Z / `.bot`
+- **`elevation_negative_down` (Default)**: La cota $Z$ del fondo marino es negativa ($Z < 0$, ej. $-20\text{ m}$). El archivo `.bot` exporta estos valores con signo negativo.
+- **`depth_positive_down`**: La profundidad es positiva ($Z > 0$, ej. $20\text{ m}$).
+
+---
+
+## Estructura del Proyecto
+
+```
+swanmesh/
+├── pyproject.toml
+├── README.md
+├── CHANGELOG.md
+├── configs/examples/
+│   ├── synthetic_example.yaml
+│   └── antofagasta_example.yaml
+├── docs/adr/
+├── examples/
+│   └── run_synthetic.py
+├── src/
+│   ├── swanmesh/
+│   │   ├── config.py
+│   │   ├── domain.py
+│   │   ├── bathymetry.py
+│   │   ├── slope.py
+│   │   ├── size_field.py
+│   │   ├── mesher/
+│   │   ├── boundaries.py
+│   │   ├── interpolate.py
+│   │   ├── export/
+│   │   ├── qa.py
+│   │   ├── plot.py
+│   │   └── pipeline.py
+│   └── swanmesh_gui/
+└── tests/
+```
+
+---
+
+## Licencia
+
+MIT License
